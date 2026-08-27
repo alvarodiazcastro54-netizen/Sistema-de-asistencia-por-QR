@@ -1,7 +1,10 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { enrollments, students } from "@/db/schema";
-import { createEnrollmentSchema } from "@/lib/validations/enrollments";
+import {
+  createEnrollmentSchema,
+  listEnrollmentsQuerySchema,
+} from "@/lib/validations/enrollments";
 import {
   fail,
   failInterno,
@@ -127,5 +130,68 @@ export async function POST(req: Request) {
       return fail("NO_ENCONTRADO", "El alumno no existe", 404);
     }
     return failInterno("POST /api/inscripciones", e);
+  }
+}
+
+// ─────────────────────────────────────────────
+// GET /api/inscripciones → listado
+// Filtro opcional: ?studentId=<uuid>  → historial de ese alumno
+//
+// Trae el alumno con innerJoin, igual que GET /api/inscripciones/[id]:
+// sin filtro el listado necesita saber de quién es cada inscripción, y con
+// filtro sale gratis (ya se está tocando la tabla para el JOIN de la FK).
+//
+// Se ordena por startDate desc y no por createdAt: el historial se lee por
+// periodo cursado, no por el momento en que el admin cargó el dato. createdAt
+// queda como desempate para dos inscripciones que arranquen el mismo día.
+//
+// Sin paginación, igual que GET /api/alumnos: un alumno del dojo acumula
+// unas pocas inscripciones al año. Si el listado completo llega a pesar,
+// se le agrega limit/offset como en GET /api/asistencias.
+// ─────────────────────────────────────────────
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const parsed = listEnrollmentsQuerySchema.safeParse({
+    studentId: searchParams.get("studentId") ?? undefined,
+  });
+
+  if (!parsed.success) return failValidacion(parsed.error);
+
+  const { studentId } = parsed.data;
+
+  try {
+    const filtros = [];
+
+    if (studentId) filtros.push(eq(enrollments.studentId, studentId));
+
+    const lista = await db
+      .select({
+        id: enrollments.id,
+        studentId: enrollments.studentId,
+        startDate: enrollments.startDate,
+        endDate: enrollments.endDate,
+        status: enrollments.status,
+        qrToken: enrollments.qrToken,
+        createdAt: enrollments.createdAt,
+        alumno: {
+          id: students.id,
+          dni: students.dni,
+          firstName: students.firstName,
+          lastName: students.lastName,
+          active: students.active,
+        },
+      })
+      .from(enrollments)
+      .innerJoin(students, eq(enrollments.studentId, students.id))
+      .where(filtros.length ? and(...filtros) : undefined)
+      .orderBy(desc(enrollments.startDate), desc(enrollments.createdAt));
+
+    // Un studentId que no existe devuelve total 0, no 404: es un listado
+    // vacío, y la página /admin/alumnos/[id] ya sabe si el alumno existe
+    // porque para renderizarse tuvo que pedirlo a /api/alumnos/[id].
+    return ok({ total: lista.length, inscripciones: lista });
+  } catch (e) {
+    return failInterno("GET /api/inscripciones", e);
   }
 }

@@ -23,3 +23,14 @@ export const createEnrollmentSchema = z
   });
 
 export type CreateEnrollmentInput = z.infer<typeof createEnrollmentSchema>;
+
+// ─────────────────────────────────────────────
+// Filtros de GET /api/inscripciones — opcionales.
+// Sin studentId devuelve todas; con studentId, el historial de ese alumno.
+// Se valida como uuid: es un listado del admin, así que un id mal formado
+// es un error del cliente y no vale hacerle el query a la BD.
+// ─────────────────────────────────────────────
+
+export const listEnrollmentsQuerySchema = z.object({
+  studentId: uuidSchema.optional(),
+});
